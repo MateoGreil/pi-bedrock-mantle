@@ -211,6 +211,9 @@ const KNOWN: Record<string, ModelSpec> = {
   // OpenAI GPT-5 — us-east-2 only
   "openai.gpt-5.5":              { contextWindow: 272000, maxTokens: 128000, reasoning: true,  input: ["text", "image"], thinkingLevelMap: { off: null, xhigh: "xhigh" } },
   "openai.gpt-5.5-2026-04-23":   { contextWindow: 272000, maxTokens: 128000, reasoning: true,  input: ["text", "image"], thinkingLevelMap: { off: null, xhigh: "xhigh" } },
+  "openai.gpt-5.6-luna":         { contextWindow: 272000, maxTokens: 128000, reasoning: true,  input: ["text", "image"], thinkingLevelMap: { off: null, xhigh: "xhigh" } },
+  "openai.gpt-5.6-sol":          { contextWindow: 272000, maxTokens: 128000, reasoning: true,  input: ["text", "image"], thinkingLevelMap: { off: null, xhigh: "xhigh" } },
+  "openai.gpt-5.6-terra":        { contextWindow: 272000, maxTokens: 128000, reasoning: true,  input: ["text", "image"], thinkingLevelMap: { off: null, xhigh: "xhigh" } },
   "openai.gpt-5.4":              { contextWindow: 272000, maxTokens: 128000, reasoning: true,  input: ["text", "image"], thinkingLevelMap: { off: null, xhigh: "xhigh" } },
   "openai.gpt-5.4-2026-03-05":   { contextWindow: 272000, maxTokens: 128000, reasoning: true,  input: ["text", "image"], thinkingLevelMap: { off: null, xhigh: "xhigh" } },
   // OpenAI OSS
