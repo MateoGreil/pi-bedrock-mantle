@@ -81,7 +81,7 @@ test("GPT-5 models route through OpenAI Responses with image input and GPT-5 thi
     assert.deepEqual(model.input, ["text", "image"]);
     assert.equal(model.reasoning, true);
     assert.deepEqual(model.thinkingLevelMap, { off: null, xhigh: "xhigh" });
-    assert.equal(model.contextWindow, 272000);
+    assert.equal(model.contextWindow, id.includes("gpt-5.6-") ? 1000000 : 272000);
     assert.equal(model.maxTokens, 128000);
   }
 });
