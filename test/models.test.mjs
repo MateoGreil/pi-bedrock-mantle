@@ -12,7 +12,7 @@ import { setLogLevel } from "../.tmp-test/log.js";
 
 // Test ports — fixed so URL assertions are stable; nothing actually binds in
 // these unit tests since fetch is mocked or model construction is pure.
-const TEST_PORTS = { cmh: 57893, iad: 57891 };
+const TEST_PORTS = { cmh: 57893, iad: 57891, pdx: 57892 };
 
 function fallbackById(id) {
   // FALLBACK_MODELS_RAW carries placeholder baseUrls. For the routing-only
@@ -24,7 +24,8 @@ function fallbackById(id) {
     ...raw,
     baseUrl: raw.baseUrl
       .replace("{{CMH_PORT}}", String(TEST_PORTS.cmh))
-      .replace("{{IAD_PORT}}", String(TEST_PORTS.iad)),
+      .replace("{{IAD_PORT}}", String(TEST_PORTS.iad))
+      .replace("{{PDX_PORT}}", String(TEST_PORTS.pdx)),
   };
 }
 
@@ -39,6 +40,7 @@ function withFakeAwsCredentials() {
   // Reset port pins so the cache key is consistent across tests.
   delete process.env.BEDROCK_MANTLE_PROXY_PORT_CMH;
   delete process.env.BEDROCK_MANTLE_PROXY_PORT_IAD;
+  delete process.env.BEDROCK_MANTLE_PROXY_PORT_PDX;
 }
 
 async function withMockedFetch(resolver, fn) {
@@ -86,6 +88,18 @@ test("GPT-5 models route through OpenAI Responses with image input and GPT-5 thi
   }
 });
 
+test("GPT-6 Astra routes through OpenAI Responses on the PDX proxy with 1.05M context", () => {
+  const model = fallbackById("openai.gpt-6-astra");
+
+  assert.equal(model.api, "openai-responses");
+  assert.equal(model.baseUrl, `http://127.0.0.1:${TEST_PORTS.pdx}/openai/v1`);
+  assert.deepEqual(model.input, ["text", "image"]);
+  assert.equal(model.reasoning, true);
+  assert.equal(model.contextWindow, 1_050_000);
+  assert.equal(model.maxTokens, 128_000);
+  assert.deepEqual(model.thinkingLevelMap, { off: null, xhigh: "xhigh" });
+});
+
 test("GPT OSS models route through OpenAI Chat Completions without image input", () => {
   for (const id of ["openai.gpt-oss-120b", "openai.gpt-oss-20b"]) {
     const model = fallbackById(id);
@@ -131,9 +145,10 @@ test("region selection prefers CMH for OpenAI-compatible models and falls back t
   });
 });
 
-test("only the OpenAI GPT-5 family uses Responses routing", () => {
+test("only the OpenAI GPT-5 and GPT-6 families use Responses routing", () => {
   assert.equal(fallbackById("openai.gpt-5.5").api, "openai-responses");
   assert.equal(fallbackById("openai.gpt-5.5-2026-04-23").api, "openai-responses");
+  assert.equal(fallbackById("openai.gpt-6-astra").api, "openai-responses");
   assert.equal(fallbackById("openai.gpt-oss-120b").api, "openai-completions");
   assert.equal(fallbackById("qwen.qwen3-vl-235b-a22b-instruct").api, "openai-completions");
 });
@@ -157,6 +172,12 @@ test("unknown model inference keeps vision and reasoning heuristics explicit", a
 test("fetchModels merges successful regional discovery and ignores a partial regional failure", async () => {
   await withMockedFetch((url) => {
     if (url.includes("us-east-1")) throw new Error("IAD unavailable");
+    if (url.includes("us-west-2")) {
+      return new Response(JSON.stringify({ data: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
     assert.match(url, /bedrock-mantle\.us-east-2\.api\.aws\/v1\/models$/);
     return new Response(JSON.stringify({ data: [
       { id: "openai.gpt-5.5" },
@@ -167,6 +188,29 @@ test("fetchModels merges successful regional discovery and ignores a partial reg
     assert.deepEqual(models.map((model) => model.id).sort(), ["openai.gpt-5.5", "openai.gpt-oss-120b"]);
     assert.equal(models.find((model) => model.id === "openai.gpt-5.5")?.api, "openai-responses");
     assert.equal(models.find((model) => model.id === "openai.gpt-oss-120b")?.api, "openai-completions");
+  });
+});
+
+test("fetchModels discovers Astra from us-west-2 and routes it through PDX", async () => {
+  await withMockedFetch((url) => {
+    if (url.includes("us-west-2")) {
+      return new Response(JSON.stringify({ data: [{ id: "openai.gpt-6-astra" }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ data: [] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }, async () => {
+    const models = await fetchModels(TEST_PORTS);
+    const astra = models.find((model) => model.id === "openai.gpt-6-astra");
+
+    assert.ok(astra);
+    assert.equal(astra.api, "openai-responses");
+    assert.equal(astra.baseUrl, `http://127.0.0.1:${TEST_PORTS.pdx}/openai/v1`);
+    assert.equal(astra.contextWindow, 1_050_000);
   });
 });
 
@@ -266,6 +310,18 @@ test("fastModels rejects caches with a stale schema version", () => {
     models.map((model) => model.id).sort(),
     FALLBACK_MODELS_RAW.map((model) => model.id).sort(),
   );
+});
+
+test("writeCachedModels preserves Astra's PDX route across ephemeral restarts", () => {
+  withFakeAwsCredentials();
+  writeCachedModels([{
+    ...FALLBACK_MODELS_RAW.find((model) => model.id === "openai.gpt-6-astra"),
+    baseUrl: "http://127.0.0.1:54321/openai/v1",
+  }]);
+
+  const models = fastModels(TEST_PORTS);
+  assert.equal(models.length, 1);
+  assert.equal(models[0].baseUrl, `http://127.0.0.1:${TEST_PORTS.pdx}/openai/v1`);
 });
 
 test("writeCachedModels strips bound ports so the cache survives ephemeral restarts", () => {
