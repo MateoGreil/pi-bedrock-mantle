@@ -6,6 +6,7 @@ import {
   FALLBACK_MODELS_RAW,
   fastModels,
   fetchModels,
+  readCachedModels,
   writeCachedModels,
 } from "../.tmp-test/models.js";
 import { setLogLevel } from "../.tmp-test/log.js";
@@ -267,7 +268,7 @@ test("fastModels uses cached live discovery without performing network discovery
     ...FALLBACK_MODELS_RAW.find((model) => model.id === "openai.gpt-oss-20b"),
   }];
   assert.ok(cached[0]);
-  writeCachedModels(cached);
+  writeCachedModels(cached, TEST_PORTS);
 
   const models = fastModels(TEST_PORTS);
   assert.deepEqual(models.map((model) => model.id), ["openai.gpt-oss-20b"]);
@@ -312,16 +313,61 @@ test("fastModels rejects caches with a stale schema version", () => {
   );
 });
 
-test("writeCachedModels preserves Astra's PDX route across ephemeral restarts", () => {
+test("writeCachedModels preserves each model's discovered region across cache round-trips", () => {
   withFakeAwsCredentials();
-  writeCachedModels([{
-    ...FALLBACK_MODELS_RAW.find((model) => model.id === "openai.gpt-6-astra"),
-    baseUrl: "http://127.0.0.1:54321/openai/v1",
-  }]);
+  const boundPorts = { cmh: 1111, iad: 2222, pdx: 3333 };
+  writeCachedModels([
+    {
+      ...FALLBACK_MODELS_RAW.find((model) => model.id === "openai.gpt-6-astra"),
+      baseUrl: "http://127.0.0.1:3333/openai/v1",
+    },
+    {
+      ...FALLBACK_MODELS_RAW.find((model) => model.id === "openai.gpt-5.6-sol"),
+      baseUrl: "http://127.0.0.1:1111/openai/v1",
+    },
+    {
+      ...FALLBACK_MODELS_RAW.find((model) => model.id === "qwen.qwen3-coder-480b-a35b-instruct"),
+      baseUrl: "http://127.0.0.1:3333/v1",
+    },
+  ], boundPorts);
 
-  const models = fastModels(TEST_PORTS);
-  assert.equal(models.length, 1);
-  assert.equal(models[0].baseUrl, `http://127.0.0.1:${TEST_PORTS.pdx}/openai/v1`);
+  const restartedPorts = { cmh: 4444, iad: 5555, pdx: 6666 };
+  const models = readCachedModels(restartedPorts);
+  assert.deepEqual(models?.map(({ id, baseUrl }) => ({ id, baseUrl })), [
+    {
+      id: "openai.gpt-6-astra",
+      baseUrl: "http://127.0.0.1:6666/openai/v1",
+    },
+    {
+      id: "openai.gpt-5.6-sol",
+      baseUrl: "http://127.0.0.1:4444/openai/v1",
+    },
+    {
+      id: "qwen.qwen3-coder-480b-a35b-instruct",
+      baseUrl: "http://127.0.0.1:6666/v1",
+    },
+  ]);
+});
+
+test("writeCachedModels skips caches when a bound port does not identify one region", () => {
+  const model = FALLBACK_MODELS_RAW.find((candidate) =>
+    candidate.id === "qwen.qwen3-coder-480b-a35b-instruct"
+  );
+
+  for (const { ports, baseUrl } of [
+    {
+      ports: { cmh: 0, iad: 2222, pdx: 0 },
+      baseUrl: "http://127.0.0.1:0/v1",
+    },
+    {
+      ports: { cmh: 1111, iad: 2222, pdx: 3333 },
+      baseUrl: "http://127.0.0.1:4444/v1",
+    },
+  ]) {
+    withFakeAwsCredentials();
+    writeCachedModels([{ ...model, baseUrl }], ports);
+    assert.equal(readCachedModels(ports), null);
+  }
 });
 
 test("writeCachedModels strips bound ports so the cache survives ephemeral restarts", () => {
@@ -331,10 +377,10 @@ test("writeCachedModels strips bound ports so the cache survives ephemeral resta
     ...FALLBACK_MODELS_RAW.find((model) => model.id === "openai.gpt-oss-20b"),
     baseUrl: "http://127.0.0.1:54321/v1",
   }];
-  writeCachedModels(live);
+  writeCachedModels(live, { cmh: 54321, iad: 54322, pdx: 54323 });
 
   // Re-read with different ports — should rehydrate to the new ports, not 54321.
-  const models = fastModels({ cmh: 11111, iad: 22222 });
+  const models = fastModels({ cmh: 11111, iad: 22222, pdx: 33333 });
   assert.equal(models.length, 1);
   assert.equal(models[0].baseUrl, "http://127.0.0.1:11111/v1");
 });

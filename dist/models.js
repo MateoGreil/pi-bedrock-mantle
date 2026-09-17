@@ -122,20 +122,33 @@ export function readCachedModels(ports, options = {}) {
     const raw = readRawCachedModels(options);
     return raw ? applyPorts(raw, ports) : null;
 }
-export function writeCachedModels(models) {
+export function writeCachedModels(models, ports) {
+    const placeholders = [
+        [String(ports.cmh), CMH_PLACEHOLDER],
+        [String(ports.iad), IAD_PLACEHOLDER],
+        [String(ports.pdx), PDX_PLACEHOLDER],
+    ];
+    const sanitized = [];
+    for (const model of models) {
+        if (!model.baseUrl) {
+            sanitized.push(model);
+            continue;
+        }
+        const portMatch = model.baseUrl.match(/(127\.0\.0\.1:)(\d+)/);
+        if (!portMatch) {
+            sanitized.push(model);
+            continue;
+        }
+        const matches = placeholders.filter(([port]) => port === portMatch[2]);
+        if (matches.length !== 1)
+            return;
+        sanitized.push({
+            ...model,
+            baseUrl: model.baseUrl.replace(portMatch[0], `${portMatch[1]}${matches[0][1]}`),
+        });
+    }
     const path = cachePath();
     mkdirSync(dirname(path), { recursive: true });
-    const sanitized = models.map((m) => {
-        if (!m.baseUrl)
-            return m;
-        const placeholder = m.api === "anthropic-messages"
-            ? IAD_PLACEHOLDER
-            : m.id === ASTRA_MODEL_ID
-                ? PDX_PLACEHOLDER
-                : CMH_PLACEHOLDER;
-        const baseUrl = m.baseUrl.replace(/(127\.0\.0\.1:)\d+/, `$1${placeholder}`);
-        return { ...m, baseUrl };
-    });
     const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
     writeFileSync(tmp, JSON.stringify({
         version: CACHE_VERSION,
@@ -349,7 +362,7 @@ export async function discoverModels(ports) {
 export async function fetchModels(ports) {
     try {
         const models = await discoverModels(ports);
-        writeCachedModels(models);
+        writeCachedModels(models, ports);
         return models;
     }
     catch (err) {
